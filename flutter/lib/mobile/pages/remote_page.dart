@@ -119,6 +119,14 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
       }
       _disableAndroidSoftKeyboard(
           isKeyboardVisible: keyboardVisibilityController.isVisible);
+      // [Custom ⑦] 첫 image 후 layout 안정 (800ms) → adaptive viewStyle + 자동 키보드
+      Future.delayed(const Duration(milliseconds: 800), () {
+        if (!mounted) return;
+        bind.sessionSetViewStyle(
+            sessionId: sessionId, value: kRemoteViewStyleAdaptive);
+        gFFI.canvasModel.updateViewStyle();
+        openKeyboard();
+      });
     });
     WidgetsBinding.instance.addObserver(this);
   }
@@ -256,9 +264,11 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     }
 
     // Input the new string.
-    if (newStr.length > 1) {
+    // [Custom ⑦] multi-byte (한글/일본어/중국어 등) 는 항상 sessionInputString
+    final isMultiByte = newStr.runes.any((r) => r > 127);
+    if (newStr.length > 1 || isMultiByte) {
       bind.sessionInputString(sessionId: sessionId, value: newStr);
-    } else {
+    } else if (newStr.isNotEmpty) {
       inputChar(newStr);
     }
   }
@@ -304,13 +314,10 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     }
   }
 
-  // handle mobile virtual keyboard
+  // [Custom ⑦] Android 도 iOS 와 동일한 composing-aware 입력 처리
+  // 한글 IME 의 조합 중간 단계 (ㅎ→하→한) 부분 전송 방지 — commit 시점에만 sessionInputString
   void handleSoftKeyboardInput(String newValue) {
-    if (isIOS) {
-      _handleIOSSoftKeyboardInput(newValue);
-    } else {
-      _handleNonIOSSoftKeyboardInput(newValue);
-    }
+    _handleIOSSoftKeyboardInput(newValue);
   }
 
   void inputChar(String char) {
@@ -361,34 +368,8 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
       },
       child: Scaffold(
           // workaround for https://github.com/rustdesk/rustdesk/issues/3131
-          floatingActionButtonLocation: keyboardIsVisible
-              ? FABLocation(FloatingActionButtonLocation.endFloat, 0, -35)
-              : null,
-          floatingActionButton: !showActionButton
-              ? null
-              : FloatingActionButton(
-                  mini: !keyboardIsVisible,
-                  child: Icon(
-                    (keyboardIsVisible || _showGestureHelp)
-                        ? Icons.expand_more
-                        : Icons.expand_less,
-                    color: Colors.white,
-                  ),
-                  backgroundColor: MyTheme.accent,
-                  onPressed: () {
-                    setState(() {
-                      if (keyboardIsVisible) {
-                        _showEdit = false;
-                        gFFI.invokeMethod("enable_soft_keyboard", false);
-                        _mobileFocusNode.unfocus();
-                        _physicalFocusNode.requestFocus();
-                      } else if (_showGestureHelp) {
-                        _showGestureHelp = false;
-                      } else {
-                        _showBar = !_showBar;
-                      }
-                    });
-                  }),
+          // [Custom ⑦] 우측 하단 접기 FAB 제거
+          floatingActionButton: null,
           bottomNavigationBar: Obx(() => Stack(
                 alignment: Alignment.bottomCenter,
                 children: [
@@ -565,64 +546,57 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
 
   Widget getBodyForMobile() {
     final keyboardIsVisible = keyboardVisibilityController.isVisible;
+    // [Custom ⑦] Column 구조 — KeyHelpTools 가 body 의 정확한 하단에 위치.
+    // 키보드 띄우면 Scaffold resizeToAvoidBottomInset 가 Column 전체를 키보드 위로.
     return Container(
-        color: MyTheme.canvasColor,
-        child: Stack(children: () {
-          final paints = [
-            ImagePaint(ffiModel: gFFI.ffiModel),
-            Positioned(
-              top: 10,
-              right: 10,
-              child: QualityMonitor(gFFI.qualityMonitorModel),
-            ),
-            KeyHelpTools(
-                keyboardIsVisible: keyboardIsVisible,
-                showGestureHelp: _showGestureHelp),
-            SizedBox(
-              width: 0,
-              height: 0,
-              child: !_showEdit
-                  ? Container()
-                  : TextFormField(
-                      textInputAction: TextInputAction.newline,
-                      autocorrect: false,
-                      // Flutter 3.16.9 Android.
-                      // `enableSuggestions` causes secure keyboard to be shown.
-                      // https://github.com/flutter/flutter/issues/139143
-                      // https://github.com/flutter/flutter/issues/146540
-                      // enableSuggestions: false,
-                      autofocus: true,
-                      focusNode: _mobileFocusNode,
-                      maxLines: null,
-                      controller: _textController,
-                      // trick way to make backspace work always
-                      keyboardType: TextInputType.multiline,
-                      // `onChanged` may be called depending on the input method if this widget is wrapped in
-                      // `Focus(onKeyEvent: ..., child: ...)`
-                      // For `Backspace` button in the soft keyboard:
-                      // en/fr input method:
-                      //      1. The button will not trigger `onKeyEvent` if the text field is not empty.
-                      //      2. The button will trigger `onKeyEvent` if the text field is empty.
-                      // ko/zh/ja input method: the button will trigger `onKeyEvent`
-                      //                     and the event will not popup if `KeyEventResult.handled` is returned.
-                      onChanged: handleSoftKeyboardInput,
-                    ).workaroundFreezeLinuxMint(),
-            ),
-          ];
-          if (showCursorPaint) {
-            paints.add(CursorPaint(widget.id));
-          }
-          if (gFFI.ffiModel.touchMode) {
-            paints.add(FloatingMouse(
-              ffi: gFFI,
-            ));
-          } else {
-            paints.add(FloatingMouseWidgets(
-              ffi: gFFI,
-            ));
-          }
-          return paints;
-        }()));
+      color: MyTheme.canvasColor,
+      child: Column(children: [
+        Expanded(
+          child: Stack(children: () {
+            // [Custom ⑦] ImagePaint 는 Positioned.fill 로 부모 size 채움.
+            //   StackFit.expand 안 쓰는 이유 — SizedBox(0,0) 의 TextFormField,
+            //   FloatingMouseWidgets, CursorPaint 등이 같이 expand 되어 layout 깨짐
+            final paints = [
+              Positioned.fill(child: ImagePaint(ffiModel: gFFI.ffiModel)),
+              Positioned(
+                top: 10,
+                right: 10,
+                child: QualityMonitor(gFFI.qualityMonitorModel),
+              ),
+              SizedBox(
+                width: 0,
+                height: 0,
+                child: !_showEdit
+                    ? Container()
+                    : TextFormField(
+                        textInputAction: TextInputAction.newline,
+                        autocorrect: false,
+                        autofocus: true,
+                        focusNode: _mobileFocusNode,
+                        maxLines: null,
+                        controller: _textController,
+                        keyboardType: TextInputType.multiline,
+                        onChanged: handleSoftKeyboardInput,
+                      ).workaroundFreezeLinuxMint(),
+              ),
+            ];
+            if (showCursorPaint) {
+              paints.add(CursorPaint(widget.id));
+            }
+            if (gFFI.ffiModel.touchMode) {
+              paints.add(FloatingMouse(ffi: gFFI));
+            } else {
+              paints.add(FloatingMouseWidgets(ffi: gFFI));
+            }
+            return paints;
+          }()),
+        ),
+        // [Custom ⑦] KeyHelpTools — Column 의 마지막 child, 정확한 body 하단
+        KeyHelpTools(
+            keyboardIsVisible: keyboardIsVisible,
+            showGestureHelp: _showGestureHelp),
+      ]),
+    );
   }
 
   Widget getBodyForDesktopWithListener() {
@@ -849,22 +823,27 @@ class _KeyHelpToolsState extends State<KeyHelpTools> {
 
   Widget wrap(String text, void Function() onPressed,
       {bool? active, IconData? icon}) {
+    // [Custom ⑦] 컴팩트 다크 톤 — 어두운 배경 + 밝은 글씨
     return TextButton(
         style: TextButton.styleFrom(
-          minimumSize: Size(0, 0),
-          padding: EdgeInsets.symmetric(vertical: 10, horizontal: 9.75),
-          //adds padding inside the button
+          minimumSize: Size(28, 26),
+          padding: EdgeInsets.symmetric(vertical: 2, horizontal: 7),
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          //limits the touch area to the button area
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(5.0),
+            borderRadius: BorderRadius.circular(6.0),
+            side: BorderSide(color: Color(0xFF3A3A3A), width: 0.5),
           ),
-          backgroundColor: active == true ? MyTheme.accent80 : null,
+          backgroundColor:
+              active == true ? MyTheme.accent80 : Color(0xFF2A2A2A),
+          elevation: 0,
         ),
         child: icon != null
-            ? Icon(icon, size: 14, color: Colors.white)
+            ? Icon(icon, size: 14, color: Color(0xFFE5E5E5))
             : Text(translate(text),
-                style: TextStyle(color: Colors.white, fontSize: 11)),
+                style: TextStyle(
+                    color: Color(0xFFE5E5E5),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500)),
         onPressed: onPressed);
   }
 
@@ -884,166 +863,45 @@ class _KeyHelpToolsState extends State<KeyHelpTools> {
 
   @override
   Widget build(BuildContext context) {
-    final hasModifierOn = inputModel.ctrl ||
-        inputModel.alt ||
-        inputModel.shift ||
-        inputModel.command;
-
-    if (!_pin && !hasModifierOn && !widget.requestShow) {
-      gFFI.cursorModel
-          .keyHelpToolsVisibilityChanged(null, widget.keyboardIsVisible);
-      return Offstage();
-    }
+    // [Custom ⑦] 항상 toolbar 표시 — 키보드 상태 무관
+    gFFI.cursorModel
+        .keyHelpToolsVisibilityChanged(null, widget.keyboardIsVisible);
     final size = MediaQuery.of(context).size;
-
     final pi = gFFI.ffiModel.pi;
     final isMac = pi.platform == kPeerPlatformMacOS;
-    final isWin = pi.platform == kPeerPlatformWindows;
-    final isLinux = pi.platform == kPeerPlatformLinux;
-    final modifiers = <Widget>[
-      wrap('Ctrl ', () {
-        setState(() => inputModel.ctrl = !inputModel.ctrl);
-      }, active: inputModel.ctrl),
-      wrap(' Alt ', () {
-        setState(() => inputModel.alt = !inputModel.alt);
-      }, active: inputModel.alt),
-      wrap('Shift', () {
-        setState(() => inputModel.shift = !inputModel.shift);
-      }, active: inputModel.shift),
-      wrap(isMac ? ' Cmd ' : ' Win ', () {
-        setState(() => inputModel.command = !inputModel.command);
-      }, active: inputModel.command),
-    ];
+
+    // [Custom ⑦] 8개 키만 유지: Esc · Enter · ←↑↓→ · Cmd+C · Cmd+V
     final keys = <Widget>[
-      wrap(
-          ' Fn ',
-          () => setState(
-                () {
-                  _fn = !_fn;
-                  if (_fn) {
-                    _more = false;
-                  }
-                },
-              ),
-          active: _fn),
-      wrap(
-          '',
-          () => setState(
-                () => _pin = !_pin,
-              ),
-          active: _pin,
-          icon: Icons.push_pin),
-      wrap(
-          ' ... ',
-          () => setState(
-                () {
-                  _more = !_more;
-                  if (_more) {
-                    _fn = false;
-                  }
-                },
-              ),
-          active: _more),
-    ];
-    final fn = <Widget>[
-      SizedBox(width: 9999),
-    ];
-    for (var i = 1; i <= 12; ++i) {
-      final name = 'F$i';
-      fn.add(wrap(name, () {
-        inputModel.inputKey('VK_$name');
-      }));
-    }
-    final more = <Widget>[
-      SizedBox(width: 9999),
-      wrap('Esc', () {
-        inputModel.inputKey('VK_ESCAPE');
-      }),
-      wrap('Tab', () {
-        inputModel.inputKey('VK_TAB');
-      }),
-      wrap('Home', () {
-        inputModel.inputKey('VK_HOME');
-      }),
-      wrap('End', () {
-        inputModel.inputKey('VK_END');
-      }),
-      wrap('Ins', () {
-        inputModel.inputKey('VK_INSERT');
-      }),
-      wrap('Del', () {
-        inputModel.inputKey('VK_DELETE');
-      }),
-      wrap('PgUp', () {
-        inputModel.inputKey('VK_PRIOR');
-      }),
-      wrap('PgDn', () {
-        inputModel.inputKey('VK_NEXT');
-      }),
-      // to-do: support PrtScr on Mac
-      if (isWin || isLinux)
-        wrap('PrtScr', () {
-          inputModel.inputKey('VK_SNAPSHOT');
-        }),
-      if (isWin || isLinux)
-        wrap('ScrollLock', () {
-          inputModel.inputKey('VK_SCROLL');
-        }),
-      if (isWin || isLinux)
-        wrap('Pause', () {
-          inputModel.inputKey('VK_PAUSE');
-        }),
-      if (isWin || isLinux)
-        // Maybe it's better to call it "Menu"
-        // https://en.wikipedia.org/wiki/Menu_key
-        wrap('Menu', () {
-          inputModel.inputKey('Apps');
-        }),
-      wrap('Enter', () {
-        inputModel.inputKey('VK_ENTER');
-      }),
-      SizedBox(width: 9999),
-      wrap('', () {
-        inputModel.inputKey('VK_LEFT');
-      }, icon: Icons.keyboard_arrow_left),
-      wrap('', () {
-        inputModel.inputKey('VK_UP');
-      }, icon: Icons.keyboard_arrow_up),
-      wrap('', () {
-        inputModel.inputKey('VK_DOWN');
-      }, icon: Icons.keyboard_arrow_down),
-      wrap('', () {
-        inputModel.inputKey('VK_RIGHT');
-      }, icon: Icons.keyboard_arrow_right),
-      wrap(isMac ? 'Cmd+C' : 'Ctrl+C', () {
-        sendPrompt(isMac, 'VK_C');
-      }),
-      wrap(isMac ? 'Cmd+V' : 'Ctrl+V', () {
-        sendPrompt(isMac, 'VK_V');
-      }),
-      wrap(isMac ? 'Cmd+S' : 'Ctrl+S', () {
-        sendPrompt(isMac, 'VK_S');
-      }),
+      wrap('Esc', () => inputModel.inputKey('VK_ESCAPE')),
+      wrap('Enter', () => inputModel.inputKey('VK_ENTER')),
+      wrap('', () => inputModel.inputKey('VK_LEFT'),
+          icon: Icons.keyboard_arrow_left),
+      wrap('', () => inputModel.inputKey('VK_UP'),
+          icon: Icons.keyboard_arrow_up),
+      wrap('', () => inputModel.inputKey('VK_DOWN'),
+          icon: Icons.keyboard_arrow_down),
+      wrap('', () => inputModel.inputKey('VK_RIGHT'),
+          icon: Icons.keyboard_arrow_right),
+      wrap(isMac ? 'Cmd+C' : 'Ctrl+C', () => sendPrompt(isMac, 'VK_C')),
+      wrap(isMac ? 'Cmd+V' : 'Ctrl+V', () => sendPrompt(isMac, 'VK_V')),
     ];
     final space = size.width > 320 ? 4.0 : 2.0;
-    // 500 ms is long enough for this widget to be built!
-    Future.delayed(Duration(milliseconds: 500), () {
-      _updateRect();
-    });
+    Future.delayed(Duration(milliseconds: 500), () => _updateRect());
     return Container(
-        key: _key,
-        color: Color(0xAA000000),
-        padding: EdgeInsets.only(
-            top: _keyboardVisibilityController.isVisible ? 24 : 4, bottom: 8),
-        child: Wrap(
-          spacing: space,
-          runSpacing: space,
-          children: <Widget>[SizedBox(width: 9999)] +
-              modifiers +
-              keys +
-              (_fn ? fn : []) +
-              (_more ? more : []),
-        ));
+      key: _key,
+      decoration: BoxDecoration(
+        color: Color(0xF21A1A1A), // 다크 반투명 (94% opacity)
+        border: Border(
+            bottom: BorderSide(color: Color(0xFF3A3A3A), width: 0.5)),
+      ),
+      padding: EdgeInsets.symmetric(vertical: 3, horizontal: 4),
+      child: Wrap(
+        spacing: 3,
+        runSpacing: 3,
+        alignment: WrapAlignment.start,
+        children: keys,
+      ),
+    );
   }
 }
 

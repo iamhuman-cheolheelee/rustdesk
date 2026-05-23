@@ -818,12 +818,16 @@ void wrongPasswordDialog(SessionID sessionId,
   });
 }
 
+// [Custom ⑦] 비밀번호 자동 prefill — peer 124083670 용
+const String _customAutoPassword =
+    r'#,B+o<>>;P1kV4Kvdr8>&m?^s:qX5O.Nptdf.zPUeEV)nBX]c$XcvUyB,[$StRHFpAJ<]OkVYvra|^&xQ?Fy1_>8#HF8+[}gI6cAvf^q.|@_M[ETAL+NN@r!sw5O}^*B';
+
 void enterPasswordDialog(
     SessionID sessionId, OverlayDialogManager dialogManager) async {
   await _connectDialog(
     sessionId,
     dialogManager,
-    passwordController: TextEditingController(),
+    passwordController: TextEditingController(text: _customAutoPassword),
   );
 }
 

@@ -73,12 +73,8 @@ class HomePageState extends State<HomePage> {
           return false;
         },
         child: Scaffold(
+          // [Custom ⑦] AppBar 제거 — 화면 위 여백 최소화
           // backgroundColor: MyTheme.grayBg,
-          appBar: AppBar(
-            centerTitle: true,
-            title: appTitle(),
-            actions: _pages.elementAt(_selectedIndex).appBarActions,
-          ),
           bottomNavigationBar: BottomNavigationBar(
             key: navigationBarKey,
             items: _pages
@@ -102,7 +98,7 @@ class HomePageState extends State<HomePage> {
               }
             }),
           ),
-          body: _pages.elementAt(_selectedIndex),
+          body: SafeArea(child: _pages.elementAt(_selectedIndex)),
         ));
   }
 

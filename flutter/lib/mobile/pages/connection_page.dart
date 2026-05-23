@@ -75,6 +75,14 @@ class _ConnectionPageState extends State<ConnectionPage> {
       });
     }
     Get.put<TextEditingController>(_idEditingController);
+
+    // [Custom ⑦] 앱 시작 시 ID 만 자동 prefill (자동 connect 는 안 함)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      setState(() {
+        _idController.id = '124083670';
+      });
+    });
   }
 
   @override
@@ -93,7 +101,7 @@ class _ConnectionPageState extends State<ConnectionPage> {
           child: PeerTabPage(),
         )
       ],
-    ).marginOnly(top: 2, left: 10, right: 10);
+    ).marginOnly(top: 0, left: 10, right: 10);
   }
 
   /// Callback for the connect button.
