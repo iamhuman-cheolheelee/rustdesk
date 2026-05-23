@@ -890,6 +890,8 @@ _connectDialog(
     });
   }
 
+  // [Custom ⑦] 비밀번호 자동 submit (한 번만) — 사용자 인터랙션 0
+  bool autoSubmitted = false;
   dialogManager.dismissAll();
   dialogManager.show((setState, close, context) {
     cancel() {
@@ -925,6 +927,17 @@ _connectDialog(
       close();
       dialogManager.showLoading(translate('Logging in...'),
           onCancel: closeConnection);
+    }
+
+    // [Custom ⑦] 비밀번호 prefill 시 자동 submit — 사용자 확인 탭 생략
+    if (!autoSubmitted &&
+        passwordController != null &&
+        passwordController.text.isNotEmpty &&
+        (osUsernameController == null || osUsernameController.text.isNotEmpty)) {
+      autoSubmitted = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        Future.delayed(const Duration(milliseconds: 200), submit);
+      });
     }
 
     descWidget(String text) {

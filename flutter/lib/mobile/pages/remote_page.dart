@@ -112,6 +112,8 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
         .changeCurrentKey(MessageKey(widget.id, ChatModel.clientModeID));
     _blockableOverlayState.applyFfi(gFFI);
     gFFI.imageModel.addCallbackOnFirstImage((String peerId) {
+      // [Custom ⑦] 첫 image 즉시: loading dialog 강제 dismiss + 자동 키보드
+      gFFI.dialogManager.dismissAll();
       gFFI.recordingModel
           .updateStatus(bind.sessionGetIsRecording(sessionId: gFFI.sessionId));
       if (gFFI.recordingModel.start) {
@@ -119,6 +121,10 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
       }
       _disableAndroidSoftKeyboard(
           isKeyboardVisible: keyboardVisibilityController.isVisible);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        openKeyboard();
+      });
     });
     WidgetsBinding.instance.addObserver(this);
   }
