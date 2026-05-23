@@ -551,16 +551,17 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
               right: 10,
               child: QualityMonitor(gFFI.qualityMonitorModel),
             ),
-            // [Custom ⑦] KeyHelpTools — Stack 안 Positioned, 키보드 위 / 화면 바닥
+            // [Custom ⑦] KeyHelpTools — 앱 맨 위 (status bar 바로 아래)
             Positioned(
               left: 0,
               right: 0,
-              bottom: keyboardIsVisible
-                  ? MediaQuery.of(context).viewInsets.bottom
-                  : 0,
-              child: KeyHelpTools(
-                  keyboardIsVisible: keyboardIsVisible,
-                  showGestureHelp: _showGestureHelp),
+              top: 0,
+              child: SafeArea(
+                bottom: false,
+                child: KeyHelpTools(
+                    keyboardIsVisible: keyboardIsVisible,
+                    showGestureHelp: _showGestureHelp),
+              ),
             ),
             SizedBox(
               width: 0,
