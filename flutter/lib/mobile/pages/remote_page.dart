@@ -119,14 +119,6 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
       }
       _disableAndroidSoftKeyboard(
           isKeyboardVisible: keyboardVisibilityController.isVisible);
-      // [Custom ⑦] 첫 image 후 layout 안정 (800ms) → adaptive viewStyle + 자동 키보드
-      Future.delayed(const Duration(milliseconds: 800), () {
-        if (!mounted) return;
-        bind.sessionSetViewStyle(
-            sessionId: sessionId, value: kRemoteViewStyleAdaptive);
-        gFFI.canvasModel.updateViewStyle();
-        openKeyboard();
-      });
     });
     WidgetsBinding.instance.addObserver(this);
   }
@@ -314,10 +306,13 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     }
   }
 
-  // [Custom ⑦] Android 도 iOS 와 동일한 composing-aware 입력 처리
-  // 한글 IME 의 조합 중간 단계 (ㅎ→하→한) 부분 전송 방지 — commit 시점에만 sessionInputString
+  // handle mobile virtual keyboard
   void handleSoftKeyboardInput(String newValue) {
-    _handleIOSSoftKeyboardInput(newValue);
+    if (isIOS) {
+      _handleIOSSoftKeyboardInput(newValue);
+    } else {
+      _handleNonIOSSoftKeyboardInput(newValue);
+    }
   }
 
   void inputChar(String char) {
@@ -546,57 +541,54 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
 
   Widget getBodyForMobile() {
     final keyboardIsVisible = keyboardVisibilityController.isVisible;
-    // [Custom ⑦] Column 구조 — KeyHelpTools 가 body 의 정확한 하단에 위치.
-    // 키보드 띄우면 Scaffold resizeToAvoidBottomInset 가 Column 전체를 키보드 위로.
     return Container(
-      color: MyTheme.canvasColor,
-      child: Column(children: [
-        Expanded(
-          child: Stack(children: () {
-            // [Custom ⑦] ImagePaint 는 Positioned.fill 로 부모 size 채움.
-            //   StackFit.expand 안 쓰는 이유 — SizedBox(0,0) 의 TextFormField,
-            //   FloatingMouseWidgets, CursorPaint 등이 같이 expand 되어 layout 깨짐
-            final paints = [
-              Positioned.fill(child: ImagePaint(ffiModel: gFFI.ffiModel)),
-              Positioned(
-                top: 10,
-                right: 10,
-                child: QualityMonitor(gFFI.qualityMonitorModel),
-              ),
-              SizedBox(
-                width: 0,
-                height: 0,
-                child: !_showEdit
-                    ? Container()
-                    : TextFormField(
-                        textInputAction: TextInputAction.newline,
-                        autocorrect: false,
-                        autofocus: true,
-                        focusNode: _mobileFocusNode,
-                        maxLines: null,
-                        controller: _textController,
-                        keyboardType: TextInputType.multiline,
-                        onChanged: handleSoftKeyboardInput,
-                      ).workaroundFreezeLinuxMint(),
-              ),
-            ];
-            if (showCursorPaint) {
-              paints.add(CursorPaint(widget.id));
-            }
-            if (gFFI.ffiModel.touchMode) {
-              paints.add(FloatingMouse(ffi: gFFI));
-            } else {
-              paints.add(FloatingMouseWidgets(ffi: gFFI));
-            }
-            return paints;
-          }()),
-        ),
-        // [Custom ⑦] KeyHelpTools — Column 의 마지막 child, 정확한 body 하단
-        KeyHelpTools(
-            keyboardIsVisible: keyboardIsVisible,
-            showGestureHelp: _showGestureHelp),
-      ]),
-    );
+        color: MyTheme.canvasColor,
+        child: Stack(children: () {
+          final paints = [
+            ImagePaint(ffiModel: gFFI.ffiModel),
+            Positioned(
+              top: 10,
+              right: 10,
+              child: QualityMonitor(gFFI.qualityMonitorModel),
+            ),
+            // [Custom ⑦] KeyHelpTools — Stack 안 Positioned, 키보드 위 / 화면 바닥
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: keyboardIsVisible
+                  ? MediaQuery.of(context).viewInsets.bottom
+                  : 0,
+              child: KeyHelpTools(
+                  keyboardIsVisible: keyboardIsVisible,
+                  showGestureHelp: _showGestureHelp),
+            ),
+            SizedBox(
+              width: 0,
+              height: 0,
+              child: !_showEdit
+                  ? Container()
+                  : TextFormField(
+                      textInputAction: TextInputAction.newline,
+                      autocorrect: false,
+                      autofocus: true,
+                      focusNode: _mobileFocusNode,
+                      maxLines: null,
+                      controller: _textController,
+                      keyboardType: TextInputType.multiline,
+                      onChanged: handleSoftKeyboardInput,
+                    ).workaroundFreezeLinuxMint(),
+            ),
+          ];
+          if (showCursorPaint) {
+            paints.add(CursorPaint(widget.id));
+          }
+          if (gFFI.ffiModel.touchMode) {
+            paints.add(FloatingMouse(ffi: gFFI));
+          } else {
+            paints.add(FloatingMouseWidgets(ffi: gFFI));
+          }
+          return paints;
+        }()));
   }
 
   Widget getBodyForDesktopWithListener() {

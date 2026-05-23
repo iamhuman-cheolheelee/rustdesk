@@ -485,23 +485,10 @@ class _RawTouchGestureDetectorRegionState
       }
     } else {
       // mobile
-      // [Custom ⑦] 두 손가락: scale 변화 큼 → zoom + canvas pan / 작음 → scroll wheel
-      final scaleDelta = (d.scale - _scale).abs();
-      if (scaleDelta > 0.05) {
-        ffi.canvasModel.updateScale(d.scale / _scale, d.focalPoint);
-        _scale = d.scale;
-        ffi.canvasModel.panX(d.focalPointDelta.dx);
-        ffi.canvasModel.panY(d.focalPointDelta.dy);
-      } else if (!ffi.ffiModel.isPeerAndroid) {
-        _mouseScrollIntegral += d.focalPointDelta.dy / 4;
-        if (_mouseScrollIntegral > 1) {
-          inputModel.scroll(1);
-          _mouseScrollIntegral = 0;
-        } else if (_mouseScrollIntegral < -1) {
-          inputModel.scroll(-1);
-          _mouseScrollIntegral = 0;
-        }
-      }
+      ffi.canvasModel.updateScale(d.scale / _scale, d.focalPoint);
+      _scale = d.scale;
+      ffi.canvasModel.panX(d.focalPointDelta.dx);
+      ffi.canvasModel.panY(d.focalPointDelta.dy);
     }
   }
 
