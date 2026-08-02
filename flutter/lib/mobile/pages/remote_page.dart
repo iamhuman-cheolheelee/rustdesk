@@ -24,6 +24,7 @@ import '../../models/platform_model.dart';
 import '../../utils/image.dart';
 import '../widgets/dialog.dart';
 import '../widgets/custom_scale_widget.dart';
+import 'soft_keyboard_input.dart';
 
 final initText = '1' * 1024;
 
@@ -62,7 +63,6 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   Timer? _timer;
   bool _showBar = !isWebDesktop;
   bool _showGestureHelp = false;
-  String _value = '';
   Orientation? _currentOrientation;
   final _uniqueKey = UniqueKey();
   Timer? _iosKeyboardWorkaroundTimer;
@@ -184,6 +184,9 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
 
   void onSoftKeyboardChanged(bool visible) {
     if (!visible) {
+      // [Custom] 조합이 확정되지 않은 채 키보드가 닫히면 마지막 글자가
+      // 누락되므로 여기서 확정해 보낸다.
+      _runSoftKeyActions(_softKeyboardTracker.flush());
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual, overlays: []);
       // [pi.version.isNotEmpty] -> check ready or not, avoid login without soft-keyboard
       if (gFFI.chatModel.chatWindowOverlayEntry == null &&
@@ -219,122 +222,39 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     setState(() {});
   }
 
-  void _handleIOSSoftKeyboardInput(String newValue) {
-    var oldValue = _value;
-    _value = newValue;
-    var i = newValue.length - 1;
-    for (; i >= 0 && newValue[i] != '1'; --i) {}
-    var j = oldValue.length - 1;
-    for (; j >= 0 && oldValue[j] != '1'; --j) {}
-    if (i < j) j = i;
-    var subNewValue = newValue.substring(j + 1);
-    var subOldValue = oldValue.substring(j + 1);
-
-    // get common prefix of subNewValue and subOldValue
-    var common = 0;
-    for (;
-        common < subOldValue.length &&
-            common < subNewValue.length &&
-            subNewValue[common] == subOldValue[common];
-        ++common) {}
-
-    // get newStr from subNewValue
-    var newStr = "";
-    if (subNewValue.length > common) {
-      newStr = subNewValue.substring(common);
-    }
-
-    // Set the value to the old value and early return if is still composing. (1 && 2)
-    // 1. The composing range is valid
-    // 2. The new string is shorter than the composing range.
-    if (_textController.value.isComposingRangeValid) {
-      final composingLength = _textController.value.composing.end -
-          _textController.value.composing.start;
-      if (composingLength > newStr.length) {
-        _value = oldValue;
-        return;
-      }
-    }
-
-    // Delete the different part in the old value.
-    for (i = 0; i < subOldValue.length - common; ++i) {
-      inputModel.inputKey('VK_BACK');
-    }
-
-    // Input the new string.
-    // [Custom ⑦] multi-byte (한글/일본어/중국어 등) 는 항상 sessionInputString
-    final isMultiByte = newStr.runes.any((r) => r > 127);
-    if (newStr.length > 1 || isMultiByte) {
-      bind.sessionInputString(sessionId: sessionId, value: newStr);
-    } else if (newStr.isNotEmpty) {
-      inputChar(newStr);
-    }
-  }
-
-  void _handleNonIOSSoftKeyboardInput(String newValue) {
-    var oldValue = _value;
-    _value = newValue;
-    if (oldValue.isNotEmpty &&
-        newValue.isNotEmpty &&
-        oldValue[0] == '1' &&
-        newValue[0] != '1') {
-      // clipboard
-      oldValue = '';
-    }
-    if (newValue.length == oldValue.length) {
-      // ?
-    } else if (newValue.length < oldValue.length) {
-      final char = 'VK_BACK';
-      inputModel.inputKey(char);
-    } else {
-      final content = newValue.substring(oldValue.length);
-      if (content.length > 1) {
-        if (oldValue != '' &&
-            content.length == 2 &&
-            (content == '""' ||
-                content == '()' ||
-                content == '[]' ||
-                content == '<>' ||
-                content == "{}" ||
-                content == '”“' ||
-                content == '《》' ||
-                content == '（）' ||
-                content == '【】')) {
-          // can not only input content[0], because when input ], [ are also auo insert, which cause ] never be input
-          bind.sessionInputString(sessionId: sessionId, value: content);
-          openKeyboard();
-          return;
-        }
-        bind.sessionInputString(sessionId: sessionId, value: content);
-      } else {
-        inputChar(content);
-      }
-    }
-  }
+  /// [Custom] IME 조합(composing)을 존중하는 소프트 키보드 입력 처리.
+  /// 자세한 근거는 soft_keyboard_input.dart 주석 참고.
+  final _softKeyboardTracker = SoftKeyboardInputTracker(initText);
 
   // handle mobile virtual keyboard
   void handleSoftKeyboardInput(String newValue) {
-    if (isIOS) {
-      _handleIOSSoftKeyboardInput(newValue);
-    } else {
-      _handleNonIOSSoftKeyboardInput(newValue);
-    }
+    final composing = _textController.value.composing;
+    _runSoftKeyActions(_softKeyboardTracker.onChanged(
+      newValue,
+      composingStart: composing.start,
+      composingEnd: composing.end,
+    ));
   }
 
-  void inputChar(String char) {
-    if (char == '\n') {
-      char = 'VK_RETURN';
-    } else if (char == ' ') {
-      char = 'VK_SPACE';
+  void _runSoftKeyActions(List<SoftKeyAction> actions) {
+    for (final action in actions) {
+      if (action is BackspaceAction) {
+        for (var i = 0; i < action.count; i++) {
+          inputModel.inputKey('VK_BACK');
+        }
+      } else if (action is InsertTextAction) {
+        bind.sessionInputString(sessionId: sessionId, value: action.text);
+      } else if (action is KeyAction) {
+        inputModel.inputKey(action.char);
+      }
     }
-    inputModel.inputKey(char);
   }
 
   void openKeyboard() {
     gFFI.invokeMethod("enable_soft_keyboard", true);
-    // destroy first, so that our _value trick can work
-    _value = initText;
-    _textController.text = _value;
+    // destroy first, so that our initText trick can work
+    _textController.text = initText;
+    _softKeyboardTracker.reset(initText);
     setState(() => _showEdit = false);
     _timer?.cancel();
     _timer = Timer(kMobileDelaySoftKeyboard, () {
