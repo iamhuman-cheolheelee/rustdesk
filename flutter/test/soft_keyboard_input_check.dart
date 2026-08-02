@@ -15,59 +15,73 @@ void check(String name, List<SoftKeyAction> got, List<SoftKeyAction> want) {
   }
 }
 
+void expectSent(String name, SoftKeyboardInputTracker t, String want) {
+  if (t.sentValue != want) {
+    failures++;
+    print('FAIL  $name  sent=${t.sentValue}  want=$want');
+  } else {
+    print('ok    $name  -> $want');
+  }
+}
+
+/// 값 시퀀스를 순서대로 흘려보내고 최종 상태를 확인한다.
+void drive(String name, List<String> values, String want) {
+  final t = SoftKeyboardInputTracker(init);
+  for (final v in values) {
+    t.onChanged(v);
+  }
+  expectSent(name, t, want);
+}
+
 const init = '111';
 
 void main() {
-  // 1. 한글 "안녕" — 삼성/Gboard 조합 시퀀스
+  // 1. 한글 "안녕" — 조합 중인 글자도 즉시 반영되고, 바뀌면 되감아 교정한다
   {
     final t = SoftKeyboardInputTracker(init);
-    check('ko ㅇ', t.onChanged('111ㅇ', composingStart: 3, composingEnd: 4), []);
-    check('ko 아', t.onChanged('111아', composingStart: 3, composingEnd: 4), []);
-    check('ko 안', t.onChanged('111안', composingStart: 3, composingEnd: 4), []);
-    check('ko 안ㄴ', t.onChanged('111안ㄴ', composingStart: 4, composingEnd: 5),
-        [InsertTextAction('안')]);
-    check('ko 안녀', t.onChanged('111안녀', composingStart: 4, composingEnd: 5), []);
-    check('ko 안녕', t.onChanged('111안녕', composingStart: 4, composingEnd: 5), []);
-    check('ko 확정', t.onChanged('111안녕'), [InsertTextAction('녕')]);
-    check('ko 최종상태', [], []);
-    if (t.sentValue != '111안녕') {
-      failures++;
-      print('FAIL  ko sentValue = ${t.sentValue}');
-    }
+    check('ko ㅇ', t.onChanged('111ㅇ'), [InsertTextAction('ㅇ')]);
+    check('ko 아', t.onChanged('111아'),
+        [BackspaceAction(1), InsertTextAction('아')]);
+    check('ko 안', t.onChanged('111안'),
+        [BackspaceAction(1), InsertTextAction('안')]);
+    check('ko 안ㄴ', t.onChanged('111안ㄴ'), [InsertTextAction('ㄴ')]);
+    check('ko 안녀', t.onChanged('111안녀'),
+        [BackspaceAction(1), InsertTextAction('녀')]);
+    check('ko 안녕', t.onChanged('111안녕'),
+        [BackspaceAction(1), InsertTextAction('녕')]);
+    expectSent('ko 최종', t, '111안녕');
   }
 
-  // 2. 한글 조합 중 백스페이스 ("각" -> "가") 는 전송되지 않아야
+  // 2. 조합 중 백스페이스 ("각" -> "가") 도 원격에 그대로 반영
   {
     final t = SoftKeyboardInputTracker(init);
-    t.onChanged('111가', composingStart: 3, composingEnd: 4);
-    t.onChanged('111각', composingStart: 3, composingEnd: 4);
-    check('ko 조합중 backspace',
-        t.onChanged('111가', composingStart: 3, composingEnd: 4), []);
-    check('ko 조합 취소', t.onChanged('111', composingStart: -1, composingEnd: -1),
-        []);
+    t.onChanged('111가');
+    t.onChanged('111각');
+    check('ko 조합중 backspace', t.onChanged('111가'),
+        [BackspaceAction(1), InsertTextAction('가')]);
+    check('ko 조합 취소', t.onChanged('111'), [BackspaceAction(1)]);
   }
 
-  // 3. 확정된 한글을 지우면 백스페이스 1회
+  // 3. 확정된 한글 삭제
   {
     final t = SoftKeyboardInputTracker(init);
-    t.onChanged('111안ㄴ', composingStart: 4, composingEnd: 5);
+    t.onChanged('111안');
     check('ko 확정 후 삭제', t.onChanged('111'), [BackspaceAction(1)]);
   }
 
-  // 4. 영문은 조합 중이라도 지연 없이 즉시 전송
+  // 4. 영문은 되감기 없이 바로바로
   {
     final t = SoftKeyboardInputTracker(init);
-    check('en h', t.onChanged('111h', composingStart: 3, composingEnd: 4),
-        [KeyAction('h')]);
-    check('en i', t.onChanged('111hi', composingStart: 3, composingEnd: 5),
-        [KeyAction('i')]);
+    check('en h', t.onChanged('111h'), [KeyAction('h')]);
+    check('en i', t.onChanged('111hi'), [KeyAction('i')]);
     check('en space', t.onChanged('111hi '), [KeyAction('VK_SPACE')]);
+    expectSent('en 최종', t, '111hi ');
   }
 
   // 5. 영문 예측 변환 치환 — 공통 prefix diff 로 교정
   {
     final t = SoftKeyboardInputTracker(init);
-    t.onChanged('111helo', composingStart: 3, composingEnd: 7);
+    t.onChanged('111helo');
     check('en 자동교정', t.onChanged('111hello'),
         [BackspaceAction(1), InsertTextAction('lo')]);
   }
@@ -95,9 +109,11 @@ void main() {
   // 9. 일본어 조합 (かんじ -> 漢字 변환)
   {
     final t = SoftKeyboardInputTracker(init);
-    check('ja 조합', t.onChanged('111かんじ', composingStart: 3, composingEnd: 6),
-        []);
-    check('ja 변환확정', t.onChanged('111漢字'), [InsertTextAction('漢字')]);
+    t.onChanged('111か');
+    t.onChanged('111かん');
+    t.onChanged('111かんじ');
+    check('ja 변환확정', t.onChanged('111漢字'),
+        [BackspaceAction(3), InsertTextAction('漢字')]);
   }
 
   // 10. 변화 없음
@@ -106,90 +122,78 @@ void main() {
     check('no-op', t.onChanged('111'), []);
   }
 
-  // 11. 한 -> 영 전환: 조합 중이던 한글이 확정되고 영문이 이어짐
+  // 11. reconversion — IME 가 확정한 앞 글자를 다시 조합 구간으로 되돌려도
+  //     화면 텍스트가 그대로면 아무것도 전송하지 않는다 (조합 구간을 안 보므로)
   {
     final t = SoftKeyboardInputTracker(init);
-    t.onChanged('111한', composingStart: 3, composingEnd: 4);
-    // 한/영 키 -> IME 가 조합 확정 (composing 해제)
-    check('한→영 확정', t.onChanged('111한'), [InsertTextAction('한')]);
-    check('한→영 a', t.onChanged('111한a', composingStart: 4, composingEnd: 5),
-        [KeyAction('a')]);
-    check('한→영 b', t.onChanged('111한ab', composingStart: 4, composingEnd: 6),
-        [KeyAction('b')]);
+    t.onChanged('111안');
+    check('reconv 무변화', t.onChanged('111안'), []);
+    check('reconv 다음글자', t.onChanged('111안ㄴ'), [InsertTextAction('ㄴ')]);
+    expectSent('reconv 최종', t, '111안ㄴ');
   }
 
-  // 12. 영 -> 한 전환: 이미 전송된 영문은 그대로, 한글은 조합 후 확정
+  // 12. 마지막 글자가 확정을 기다리지 않고 즉시 나간다 (지연 없음)
   {
     final t = SoftKeyboardInputTracker(init);
-    t.onChanged('111ab', composingStart: 3, composingEnd: 5);
-    check('영→한 조합시작',
-        t.onChanged('111ab하', composingStart: 5, composingEnd: 6), []);
-    check('영→한 조합중', t.onChanged('111ab한', composingStart: 5, composingEnd: 6),
-        []);
-    check('영→한 확정', t.onChanged('111ab한'), [InsertTextAction('한')]);
+    t.onChanged('111ㅎ');
+    t.onChanged('111하');
+    check('마지막 글자 즉시', t.onChanged('111한'),
+        [BackspaceAction(1), InsertTextAction('한')]);
+    expectSent('마지막 글자 반영됨', t, '111한');
   }
 
-  // 13. 한/영 반복 전환 — 최종 문자열이 정확해야
-  {
-    final t = SoftKeyboardInputTracker(init);
-    final steps = [
-      ['111ㄱ', 3, 4], ['111가', 3, 4], ['111가', -1, -1], // 한
-      ['111가A', 4, 5], ['111가A', -1, -1], // 영
-      ['111가Aㄴ', 5, 6], ['111가A나', 5, 6], ['111가A나', -1, -1], // 한
-      ['111가A나Z', 6, 7], ['111가A나Z', -1, -1], // 영
-    ];
-    for (final s in steps) {
-      t.onChanged(s[0] as String,
-          composingStart: s[1] as int, composingEnd: s[2] as int);
-    }
-    if (t.sentValue != '111가A나Z') {
-      failures++;
-      print('FAIL  한영 반복전환 최종값 = ${t.sentValue} (want 111가A나Z)');
-    } else {
-      print('ok    한영 반복전환 최종값 -> ${t.sentValue}');
-    }
-  }
-
-  // 14. flush — 조합 미확정 상태로 키보드가 닫혀도 누락되지 않아야
-  {
-    final t = SoftKeyboardInputTracker(init);
-    t.onChanged('111안ㄴ', composingStart: 4, composingEnd: 5);
-    t.onChanged('111안녕', composingStart: 4, composingEnd: 5);
-    if (!t.hasPending) {
-      failures++;
-      print('FAIL  hasPending 이 false');
-    }
-    check('flush 미확정 조합', t.flush(), [InsertTextAction('녕')]);
-    check('flush 재호출 무해', t.flush(), []);
-  }
-
-  // 15. 클립보드 붙여넣기로 더미 prefix 까지 통째로 치환 — 백스페이스 폭주 금지
+  // 13. 클립보드 붙여넣기로 더미 prefix 까지 통째로 치환 — 백스페이스 폭주 금지
   {
     final t = SoftKeyboardInputTracker('1' * 1024);
     check('클립보드 전체치환', t.onChanged('pasted 텍스트'),
         [InsertTextAction('pasted 텍스트')]);
   }
 
-  // 16. 중국어 병음(ASCII 조합 -> 한자 확정) — 자동 교정으로 최종 결과 정확
+  // 14. 중국어 병음 (ni -> 你)
   {
     final t = SoftKeyboardInputTracker(init);
-    check('zh 병음 n', t.onChanged('111n', composingStart: 3, composingEnd: 4),
-        [KeyAction('n')]);
-    check('zh 병음 ni', t.onChanged('111ni', composingStart: 3, composingEnd: 5),
-        [KeyAction('i')]);
+    check('zh n', t.onChanged('111n'), [KeyAction('n')]);
+    check('zh ni', t.onChanged('111ni'), [KeyAction('i')]);
     check('zh 한자 확정', t.onChanged('111你'),
         [BackspaceAction(2), InsertTextAction('你')]);
   }
 
-  // 17. 커서를 중간으로 옮겨 조합 (조합 구간 뒤에 텍스트가 남는 경우)
+  // 15. 커서를 중간으로 옮겨 삽입
   {
     final t = SoftKeyboardInputTracker(init);
     t.onChanged('111abc');
-    check('중간 조합', t.onChanged('111a한bc', composingStart: 4, composingEnd: 5),
-        [BackspaceAction(2)]);
-    check('중간 조합 확정', t.onChanged('111a한bc'),
-        [InsertTextAction('한bc')]);
+    check('중간 삽입', t.onChanged('111a한bc'),
+        [BackspaceAction(2), InsertTextAction('한bc')]);
+    expectSent('중간 삽입 최종', t, '111a한bc');
   }
+
+  // --- 전체 문장 주행: 최종 결과가 화면과 일치해야 한다 ---
+
+  drive('주행: 안녕하세요', [
+    '111ㅇ', '111아', '111안',
+    '111안ㄴ', '111안녀', '111안녕',
+    '111안녕ㅎ', '111안녕하',
+    '111안녕하ㅅ', '111안녕하세',
+    '111안녕하세ㅇ', '111안녕하세요',
+  ], '111안녕하세요');
+
+  drive('주행: 한영 반복 전환', [
+    '111ㄱ', '111가',
+    '111가A',
+    '111가Aㄴ', '111가A나',
+    '111가A나Z',
+  ], '111가A나Z');
+
+  drive('주행: 한글 지우고 다시 쓰기', [
+    '111ㅅ', '111사', '111산',
+    '111사', '111삼',
+    '111삼ㅅ', '111삼시', '111삼십',
+  ], '111삼십');
+
+  drive('주행: 영문 단어 + 공백 + 한글', [
+    '111h', '111hi', '111hi ',
+    '111hi ㄱ', '111hi 가', '111hi 감',
+  ], '111hi 감');
 
   print(failures == 0 ? '\nALL PASS' : '\n$failures FAILED');
 }

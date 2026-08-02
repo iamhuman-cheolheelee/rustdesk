@@ -184,9 +184,6 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
 
   void onSoftKeyboardChanged(bool visible) {
     if (!visible) {
-      // [Custom] 조합이 확정되지 않은 채 키보드가 닫히면 마지막 글자가
-      // 누락되므로 여기서 확정해 보낸다.
-      _runSoftKeyActions(_softKeyboardTracker.flush());
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual, overlays: []);
       // [pi.version.isNotEmpty] -> check ready or not, avoid login without soft-keyboard
       if (gFFI.chatModel.chatWindowOverlayEntry == null &&
@@ -228,12 +225,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
 
   // handle mobile virtual keyboard
   void handleSoftKeyboardInput(String newValue) {
-    final composing = _textController.value.composing;
-    _runSoftKeyActions(_softKeyboardTracker.onChanged(
-      newValue,
-      composingStart: composing.start,
-      composingEnd: composing.end,
-    ));
+    _runSoftKeyActions(_softKeyboardTracker.onChanged(newValue));
   }
 
   void _runSoftKeyActions(List<SoftKeyAction> actions) {
